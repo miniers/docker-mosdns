@@ -1,0 +1,10 @@
+version: '3'
+services:
+  mosdns:
+    image: miniers/mosdns:latest
+    cap_add:
+      - NET_ADMIN
+    volumes:
+      - ./config:/config
+    restart: always
+    container_name: mosdns

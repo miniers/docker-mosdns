@@ -1,0 +1,5 @@
+#!/usr/bin/with-contenv sh
+
+if [ ! -f /config/config.yaml ]; then
+    /mosdns/modify -gen /config/config.yaml
+fi

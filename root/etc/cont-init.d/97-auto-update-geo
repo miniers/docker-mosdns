@@ -1,0 +1,4 @@
+#!/usr/bin/with-contenv ash
+
+echo "1 */8 * * * /usr/bin/update-geo" > /crontab.bak
+crontab /crontab.bak
