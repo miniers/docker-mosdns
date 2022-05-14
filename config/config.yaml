@@ -1,123 +1,126 @@
-plugin:
-  - tag: log        # 日志
-    type: logger
-    args:
-      level: info
+log:
+  level: info
 
-  - tag: main_server    # 启动服务器
-    type: server
-    args:
-      entry: pipeline
-      max_concurrent_queries: 0
-      server:
-        - protocol: udp
-          addr: 0.0.0.0:53
-        - protocol: tcp
-          addr: 0.0.0.0:53
+plugin:
 
   ################# 可执行插件 ################
-
-  - tag: pipeline
-    type: pipeline
-    args:
-      pipe:
-        - _default_cache          # 缓存
-        - main_sequence           # 处理请求的主要执行序列
 
   - tag: main_sequence
     type: sequence
     args:
       exec:
         - if:
-            - query_is_ad_domain    # 处理已知的广告域名
+            - query_is_ad_domain    # 已知的广告域名
           exec:
             - _block_with_nxdomain  # 屏蔽
-          goto: _end
-
+            - _return
         - if:
-            - query_is_local_domain   # 处理已知的本地域名
-            - !_query_is_common       # 和不常见的请求类型
+            - domain_is_force_proxy  # 已知的非本地域名
           exec:
-            - forward_local
-          goto: _end
-
+            - forward_remote             # 用远程服务器
+            - _return
+        - forward_local
         - if:
-            - query_is_non_local_domain  # 处理已知的非本地域名
+            - is_cf_ip
           exec:
-            - forward_remote
-          goto: _end
+            - best_cf_ip
+            - _return
+        - if:
+            - response_has_local_ip   # 如果应答包含本地 IP
+          exec:
+            - _return                # 就直接采用结果
+        - if:
+            - query_is_local_domain   # 已知的本地域名
+            - "!_query_is_common"     # 和不常见的请求类型
+          exec:
+            - _return
+        - forward_remote              # 否则用远程服务器的结果
 
-        - sequence_bypass_local   # 用 IP 分流未知域名。有两种方案：顺序或并行。这是顺序执行。
-      # - parallel_bypass_local   # 如果想用类似 ChinaDNS 的并发分流逻辑。用这个。
+  - tag: forward_local                # 转发至本地服务器的插件
+    type: fast_forward
+    args:
+      upstream:
+        - addr: 'https://223.5.5.5/dns-query'
+          trusted: true
+          dial_addr: '223.5.5.5:443'
+        - addr: 'https://doh.pub/dns-query'
+          trusted: true
+          dial_addr: '120.53.80.136:443'
 
-  - tag: sequence_bypass_local        # 顺序执行的分流逻辑
+  - tag: forward_remote               # 转发至远程服务器的插件
     type: sequence
     args:
       exec:
-        - forward_local               # 先请求转发至本地服务器
-        - if:
-            - response_has_local_ip   # 如果应答包含本地 IP
-          goto: _end                  # 就直接采用结果
-        - forward_remote              # 否则用远程服务器的结果
-
-  - tag: parallel_bypass_local        # 并发执行的分流的逻辑
-    type: parallel
-    args:
-      exec:
-        - - forward_local               # 并发请求本地和远程服务器
-          - if:
-              - !response_has_local_ip  # 如果本地服务器返回的非本地 IP
-            exec:
-              - _drop_response          # 应答会被丢弃
-        - - forward_remote
-
-  - tag: forward_local # 转发至本地服务器的插件
-    type: forward
+        - primary:            # 主要执行序列。执行序列说明见 `sequence` 插件的 `exec` 参数。
+            - forward_proxy_dns
+          secondary:          # 次要执行序列。同上。
+            # - _prefer_ipv4
+            - forward_local
+          # stat_length: 10   # 常规 fallback 统计长度。默认 0，禁用常规 fallback。可省略。
+          # threshold: 5      # 常规 fallback 触发阈值。不可大于统计长度。默认 0。可省略。
+          fast_fallback: 200    # 快速 fallback 触发阈值。单位: 毫秒。默认: 0，禁用快速 fallback。可省略。
+          always_standby: true # 快速 fallback secondary 始终待命。可省略。
+      
+  - tag: forward_proxy_dns # 转发至远程服务器的插件
+    type: fast_forward
     args:
       upstream:
-        - addr: 119.29.29.29
-        - addr: 223.5.5.5
-
-  - tag: forward_remote # 转发至远程服务器的插件
-    type: fallback
-    args:
-      primary:            # 主要执行序列。执行序列说明见 `sequence` 插件的 `exec` 参数。
-        - forward_clash_dns
-      secondary:          # 次要执行序列。同上。
-        - forward_local
-      stat_length: 30     # 统计长度。默认 10。
-      threshold: 10        # 触发阈值。不可大于统计长度。默认 5。
-  
-  - tag: forward_clash_dns # 转发至远程服务器的插件
-    type: forward
-    args:
-      upstream:
-        - addr: 198.18.0.2
-
+        - addr: 198.18.0.2 #这里是clash或者surge的dns
   ################ 匹配器插件 #################
 
   - tag: query_is_local_domain         # 匹配本地域名的插件
     type: query_matcher
     args:
       domain:
-        - ./geosite.dat:cn
+        - "ext:./geosite.dat:cn"
+        - "ext:./direct.txt"  
 
-  - tag: query_is_non_local_domain    # 匹配非本地域名的插件
+  - tag: domain_is_force_proxy         # 强制远端解析
     type: query_matcher
     args:
       domain:
-        - ./geosite.dat:geolocation-!cn
+        - "ext:./proxy.txt"
 
   - tag: query_is_ad_domain           # 匹配广告域名的插件
     type: query_matcher
     args:
       domain:
-        - ./geosite.dat:category-ads-all
+        - "ext:./geosite.dat:category-ads-all"
 
   - tag: response_has_local_ip        # 匹配本地 IP的插件
     type: response_matcher
     args:
       ip:
-        - ./geoip.dat:cn
+        - "ext:./geoip.dat:cn"
 
-include: [ ]
+  - tag: "dns_cache"
+    type: cache
+    args:
+      # 内存缓存。
+      size: 2048            # 缓存大小。单位: 条。默认: 1024。
+      # cleaner_interval: 120 # 回收器扫描间隔。单位: 秒。默认: 120。一般无需修改。
+  - tag: 'is_cf_ip'
+    type: 'response_matcher'
+    args:
+      ip:                       # 匹配应答 A 和 AAAA 记录的 IP 。这是个 `IP 匹配器`。详见下文。
+        - '${{ /usr/bin/cf-matcher }}'
+  - tag: 'best_cf_ip'
+    type: 'blackhole'
+    args:
+      ipv4: '${{ cat /config/best_cf_ip.txt }}' # 如果请求类型是 A，则生成 IP 为该地址的应答。
+  ################# 服务插件 ################
+
+  - tag: main_server      # 启动服务器
+    type: server
+    args:
+      entry:
+        - dns_cache  # 缓存
+        - _single_flight  # 去除重复请求
+        - _prefer_ipv4 
+        - main_sequence
+      max_concurrent_queries: 0
+      server:
+        - protocol: udp
+          addr: 0.0.0.0:53
+        - protocol: tcp
+          addr: 0.0.0.0:53

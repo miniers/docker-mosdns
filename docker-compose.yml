@@ -6,5 +6,7 @@ services:
       - NET_ADMIN
     volumes:
       - ./config:/config
+    environment:
+      - GEO_CDN=cdn.jsdelivr.net
     restart: always
     container_name: mosdns

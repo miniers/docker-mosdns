@@ -1,5 +1,9 @@
 #!/usr/bin/with-contenv sh
-
+mkdir -p /config
 if [ ! -f /config/config.yaml ]; then
-    /mosdns/modify -gen /config/config.yaml
+    # /usr/bin/mosdns -gen /config/config.yaml
+    cp /example/config.yaml /config/config.yaml
 fi
+touch /config/best_cf_ip.txt
+touch /config/direct.txt
+touch /config/proxy.txt

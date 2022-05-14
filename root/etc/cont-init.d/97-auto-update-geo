@@ -1,4 +1,8 @@
 #!/usr/bin/with-contenv ash
 
-echo "1 */8 * * * /usr/bin/update-geo" > /crontab.bak
+if [ ! -f /crontab.bak ]; then
+    touch /crontab.bak
+fi
+
+echo "1 1 * * 0 /usr/bin/update-geo" >> /crontab.bak
 crontab /crontab.bak

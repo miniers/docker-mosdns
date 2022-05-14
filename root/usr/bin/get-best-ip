@@ -1,0 +1,17 @@
+#!/usr/bin/with-contenv sh
+# echo -e "开始下载cf ipv4"
+# curl -sSL https://www.cloudflare.com/ips-v4 > /tmp/cf-ips.txt
+
+# BESTIP="162.159.160.219"
+echo -e "开始测速..."
+/usr/bin/CloudflareST -f "/root/cfip.txt" -o "/root/cf_result.txt" -dt 5 -url https://cloudflare.cdn.openbsd.org/pub/OpenBSD/7.1/alpha/install71.iso
+
+[[ ! -e "/root/cf_result.txt" ]] && echo "CloudflareST 测速结果 IP 数量为 0，跳过下面步骤..." && exit 0
+
+BESTIP=$(sed -n "2,1p" /root/cf_result.txt | awk -F, '{print $1}')
+if [[ -z "${BESTIP}" ]]; then
+	echo "CloudflareST 测速结果 IP 数量为 0，跳过下面步骤..."
+	exit 0
+fi
+echo ${BESTIP} > /config/best_cf_ip.txt
+echo -e "\n最佳 IP 为 ${BESTIP}\n"
