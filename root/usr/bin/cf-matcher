@@ -1,7 +1,0 @@
-#!/usr/bin/with-contenv sh
-
-if [ -s /config/best_cf_ip.txt ]; then
-    echo "ext:./geoip.dat:cloudflare"
-else 
-    echo "0.0.0.0/32"
-fi

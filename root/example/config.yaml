@@ -13,27 +13,33 @@ plugin:
             - query_is_ad_domain    # 已知的广告域名
           exec:
             - _block_with_nxdomain  # 屏蔽
-            - _return
-        - if:
-            - domain_is_force_proxy  # 已知的非本地域名
-          exec:
-            - forward_remote             # 用远程服务器
-            - _return
-        - forward_local
-        - if:
-            - is_cf_ip
-          exec:
-            - best_cf_ip
-            - _return
-        - if:
-            - response_has_local_ip   # 如果应答包含本地 IP
-          exec:
-            - _return                # 就直接采用结果
+            - _end
+
         - if:
             - query_is_local_domain   # 已知的本地域名
             - "!_query_is_common"     # 和不常见的请求类型
+          if_and:
+            - "!domain_is_force_proxy"  
           exec:
-            - _return
+            - forward_local           # 用本地服务器
+            - _end
+
+        - if:
+            - query_is_non_local_domain  # 已知的非本地域名
+            - domain_is_force_proxy  # 已知的非本地域名
+          exec:
+            - forward_remote             # 用远程服务器
+            - _end
+
+          # 剩下的域名用 IP 分流。
+          # 有两种方案："顺序分流"或"并发分流"。
+          # 下面的是"顺序分流"的配置。
+
+        - forward_local               # 先请求转发至本地服务器
+        - if:
+            - response_has_local_ip   # 如果应答包含本地 IP
+          exec:
+            - _end                # 就直接采用结果
         - forward_remote              # 否则用远程服务器的结果
 
   - tag: forward_local                # 转发至本地服务器的插件
@@ -52,20 +58,19 @@ plugin:
     args:
       exec:
         - primary:            # 主要执行序列。执行序列说明见 `sequence` 插件的 `exec` 参数。
-            - forward_proxy_dns
+            - forward_clash_dns
           secondary:          # 次要执行序列。同上。
-            # - _prefer_ipv4
             - forward_local
-          # stat_length: 10   # 常规 fallback 统计长度。默认 0，禁用常规 fallback。可省略。
-          # threshold: 5      # 常规 fallback 触发阈值。不可大于统计长度。默认 0。可省略。
+          # stat_length: 30     # 统计长度。默认 10。
+          # threshold: 10        # 触发阈值。不可大于统计长度。默认 5。
           fast_fallback: 200    # 快速 fallback 触发阈值。单位: 毫秒。默认: 0，禁用快速 fallback。可省略。
           always_standby: true # 快速 fallback secondary 始终待命。可省略。
       
-  - tag: forward_proxy_dns # 转发至远程服务器的插件
+  - tag: forward_clash_dns # 转发至远程服务器的插件
     type: fast_forward
     args:
       upstream:
-        - addr: 198.18.0.2 #这里是clash或者surge的dns
+        - addr: 198.18.0.2
   ################ 匹配器插件 #################
 
   - tag: query_is_local_domain         # 匹配本地域名的插件
@@ -81,11 +86,18 @@ plugin:
       domain:
         - "ext:./proxy.txt"
 
+  - tag: query_is_non_local_domain    # 匹配非本地域名的插件
+    type: query_matcher
+    args:
+      domain:
+        - "ext:./geosite.dat:geolocation-!cn"
+
   - tag: query_is_ad_domain           # 匹配广告域名的插件
     type: query_matcher
     args:
       domain:
         - "ext:./geosite.dat:category-ads-all"
+        - "ext:./block.txt"
 
   - tag: response_has_local_ip        # 匹配本地 IP的插件
     type: response_matcher
@@ -97,17 +109,10 @@ plugin:
     type: cache
     args:
       # 内存缓存。
-      size: 2048            # 缓存大小。单位: 条。默认: 1024。
+      size: 5024            # 缓存大小。单位: 条。默认: 1024。
       # cleaner_interval: 120 # 回收器扫描间隔。单位: 秒。默认: 120。一般无需修改。
-  - tag: 'is_cf_ip'
-    type: 'response_matcher'
-    args:
-      ip:                       # 匹配应答 A 和 AAAA 记录的 IP 。这是个 `IP 匹配器`。详见下文。
-        - '${{ /usr/bin/cf-matcher }}'
-  - tag: 'best_cf_ip'
-    type: 'blackhole'
-    args:
-      ipv4: '${{ cat /config/best_cf_ip.txt }}' # 如果请求类型是 A，则生成 IP 为该地址的应答。
+  
+
   ################# 服务插件 ################
 
   - tag: main_server      # 启动服务器
@@ -116,7 +121,6 @@ plugin:
       entry:
         - dns_cache  # 缓存
         - _single_flight  # 去除重复请求
-        - _prefer_ipv4 
         - main_sequence
       max_concurrent_queries: 0
       server:
